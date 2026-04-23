@@ -105,33 +105,30 @@ export default {
 				}
 
 				const workshopLlm = createWorkshopLlm(env.DEV_SHOWDOWN_API_KEY, interactionId);
-				const result = await generateText({
+
+				const { object: { city } } = await generateObject({
 					model: workshopLlm.chatModel('deli-4'),
-					system: 'You are a helpful weather assistant. Use the getWeather tool to answer weather questions.',
+					schema: z.object({ city: z.string().describe('The city name mentioned in the question') }),
 					prompt: payload.question,
-					maxSteps: 5,
-					tools: {
-						getWeather: tool({
-							description: 'Get the current weather for a city',
-							parameters: z.object({
-								city: z.string().describe('The city name to get weather for'),
-							}),
-							execute: async ({ city }) => {
-								const response = await fetch('https://devshowdown.com/api/weather', {
-									method: 'POST',
-									headers: {
-										'Content-Type': 'application/json',
-										[INTERACTION_ID_HEADER]: interactionId,
-									},
-									body: JSON.stringify({ city }),
-								});
-								return await response.json();
-							},
-						}),
-					},
 				});
 
-				return Response.json({ answer: result.text });
+				const weatherResponse = await fetch('https://devshowdown.com/api/weather', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						[INTERACTION_ID_HEADER]: interactionId,
+					},
+					body: JSON.stringify({ city }),
+				});
+				const weatherData = await weatherResponse.json<any>();
+
+				const { text } = await generateText({
+					model: workshopLlm.chatModel('deli-4'),
+					system: 'You are a helpful weather assistant. Answer concisely and include the temperature.',
+					prompt: `Question: ${payload.question}\nWeather data: ${JSON.stringify(weatherData)}`,
+				});
+
+				return Response.json({ answer: text });
 			}
 			default:
 					return new Response('Solver not found', { status: 404 });
