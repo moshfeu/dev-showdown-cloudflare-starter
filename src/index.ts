@@ -1,5 +1,5 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { generateObject, generateText } from 'ai';
+import { generateObject, generateText, tool } from 'ai';
 import { z } from 'zod';
 
 const INTERACTION_ID_HEADER = 'X-Interaction-Id';
@@ -73,7 +73,7 @@ export default {
 				const result = await generateObject({
 					model: workshopLlm.chatModel('deli-4'),
 					schema: z.object({
-						name: z.string(),
+						name: z.string().describe('The full product name as mentioned in the description'),
 						price: z.number(),
 						currency: z.string(),
 						inStock: z.boolean(),
@@ -98,6 +98,40 @@ export default {
 				});
 
 				return Response.json(result.object);
+			}
+			case 'BASIC_TOOL_CALL': {
+				if (!env.DEV_SHOWDOWN_API_KEY) {
+					throw new Error('DEV_SHOWDOWN_API_KEY is required');
+				}
+
+				const workshopLlm = createWorkshopLlm(env.DEV_SHOWDOWN_API_KEY, interactionId);
+				const result = await generateText({
+					model: workshopLlm.chatModel('deli-4'),
+					system: 'You are a helpful weather assistant. Use the getWeather tool to answer weather questions.',
+					prompt: payload.question,
+					maxSteps: 5,
+					tools: {
+						getWeather: tool({
+							description: 'Get the current weather for a city',
+							parameters: z.object({
+								city: z.string().describe('The city name to get weather for'),
+							}),
+							execute: async ({ city }) => {
+								const response = await fetch('https://devshowdown.com/api/weather', {
+									method: 'POST',
+									headers: {
+										'Content-Type': 'application/json',
+										[INTERACTION_ID_HEADER]: interactionId,
+									},
+									body: JSON.stringify({ city }),
+								});
+								return await response.json();
+							},
+						}),
+					},
+				});
+
+				return Response.json({ answer: result.text });
 			}
 			default:
 					return new Response('Solver not found', { status: 404 });
